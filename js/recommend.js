@@ -13,6 +13,7 @@
 import { BY_KEY, REF_LOAD, TRANSITION_SEC, priorPace } from './movements.js';
 import { workPerUnit, unitsDone } from './metrics.js';
 import { pick, resolveBlocks } from './parser.js';
+import { soreHits } from './features.js';
 
 const DAY = 86400000;
 const RECENCY_DAYS = 90;
@@ -185,7 +186,7 @@ const fmt = sec => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-export function recommend({ versions, workouts, levels, side = 'max', body, defaultLevel = null, now = Date.now(), fmtLoad = kg => `${+(+kg).toFixed(1)}kg` }) {
+export function recommend({ versions, workouts, levels, side = 'max', body, defaultLevel = null, now = Date.now(), fmtLoad = kg => `${+(+kg).toFixed(1)}kg`, condition = null }) {
   const fit = fitPaces(workouts, body, now);
 
   // 내가 실제로 수행해본 최고 무게
@@ -277,6 +278,12 @@ export function recommend({ versions, workouts, levels, side = 'max', body, defa
     }
   }
 
+  // 오늘 컨디션이 낮으면(1~2/5) 한 단계 보수적으로
+  if (condition?.feel != null && condition.feel <= 2 && rec < n - 1) {
+    rec += 1;
+    reasons.push(`오늘 컨디션이 낮습니다 (${condition.feel}/5) → 한 단계 낮췄습니다`);
+  }
+
   // 안전장치: 캡 위험이거나 무게가 급격히 늘면 한 단계씩 내림
   while (rec < n - 1 && blockedWhy(per[rec])) {
     reasons.push(`${per[rec].level}: ${blockedWhy(per[rec])} → 한 단계 낮췄습니다`);
@@ -315,5 +322,9 @@ export function recommend({ versions, workouts, levels, side = 'max', body, defa
   else if (r.minObs >= 1) confidence = { level: 'mid', text: '일부 운동은 기록이 1~2회뿐입니다' };
   else confidence = { level: 'low', text: '처음 하는 운동이 있어 일반 기준으로 추정했습니다' };
 
-  return { rec, per, reasons, warning, confidence, fit };
+  // 근육통 부위를 쓰는 동작 경고
+  const sore = soreHits(versions[rec].blocks.flatMap(b => b.items), condition?.sore || []);
+  const soreWarning = sore.length ? sore.map(h => `${h.label} 근육통: ${h.moves.join(', ')}`).join(' / ') : null;
+
+  return { rec, per, reasons, warning, soreWarning, confidence, fit };
 }

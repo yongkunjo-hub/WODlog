@@ -26,11 +26,16 @@
       <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
     <input id="sheet-q" class="sheet-q" placeholder="검색">
     <div id="sheet-list" class="sheet-list"></div>
+    <div id="sheet-body" class="sheet-body" hidden></div>
   </div>
 </div>
 <nav class="tabbar">
   <a href="#/" data-nav="">
-    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    <span>오늘</span>
+  </a>
+  <a href="#/log" data-nav="log">
+    <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M9 3v4M15 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     <span>기록</span>
   </a>
   <a href="#/new" data-nav="new" class="plus" aria-label="입력">
@@ -38,12 +43,12 @@
     <span>입력</span>
   </a>
   <a href="#/stats" data-nav="stats">
-    <svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-    <span>통계</span>
+    <svg viewBox="0 0 24 24"><path d="M4 18l5-6 4 3 7-9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>성장</span>
   </a>
-  <a href="#/settings" data-nav="settings">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2L5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-    <span>설정</span>
+  <a href="#/me" data-nav="me">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.6 4.2-5.4 7.5-5.4s6.1 1.8 7.5 5.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span>내 정보</span>
   </a>
 </nav>
 <script type="module" src="js/app.js"></script>
