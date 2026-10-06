@@ -1,6 +1,6 @@
 // 오프라인 지원: 앱 파일을 캐시하고, 온라인이면 백그라운드에서 최신본으로 갱신
 // 앱 파일을 수정해 배포할 때 VERSION 을 올리면 이전 캐시가 정리됨
-const VERSION = 'wodlog-v0.6.0';
+const VERSION = 'wodlog-v0.6.1';
 const FILES = [
   './',
   'index.html',

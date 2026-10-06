@@ -28,16 +28,22 @@ export function drawCard(card) {
   c.width = W;
   c.height = H;
   const ctx = c.getContext('2d');
+  // 색: 선택한 디자인의 포인트 색 (없으면 블루)
+  const C = { accent: '#3182f6', press: '#1b4fd6', ink: '#ffffff', ...(card.colors || {}) };
+  const ink = a => {
+    ctx.fillStyle = C.ink;
+    ctx.globalAlpha = a;
+  };
 
-  // 배경: 토스 블루 그라데이션
+  // 배경: 포인트 색 그라데이션
   const g = ctx.createLinearGradient(0, 0, W, H);
-  g.addColorStop(0, '#3182f6');
-  g.addColorStop(1, '#1b4fd6');
+  g.addColorStop(0, C.accent);
+  g.addColorStop(1, C.press);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
   // 상단: 앱 이름 · 날짜
-  ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ink(0.75);
   ctx.font = `700 34px ${FONT}`;
   ctx.fillText('WOD LOG', 80, 120);
   ctx.textAlign = 'right';
@@ -46,24 +52,24 @@ export function drawCard(card) {
   ctx.textAlign = 'left';
 
   // 제목 · 레벨
-  ctx.fillStyle = '#fff';
+  ink(1);
   ctx.font = `800 64px ${FONT}`;
   ctx.fillText(fit(ctx, card.title || 'WOD', W - 160), 80, 250);
   if (card.level) {
     ctx.font = `700 34px ${FONT}`;
     const tw = ctx.measureText(card.level).width + 44;
-    ctx.fillStyle = 'rgba(255,255,255,.2)';
+    ink(0.2);
     rr(ctx, 80, 290, tw, 60, 18);
     ctx.fill();
-    ctx.fillStyle = '#fff';
+    ink(1);
     ctx.fillText(card.level, 102, 332);
   }
 
   // 큰 숫자
-  ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ink(0.75);
   ctx.font = `600 36px ${FONT}`;
   ctx.fillText(card.bigLabel || '', 80, 470);
-  ctx.fillStyle = '#fff';
+  ink(1);
   ctx.font = `800 190px ${FONT}`;
   ctx.fillText(card.big || '-', 72, 640);
 
@@ -71,10 +77,10 @@ export function drawCard(card) {
   const lines = (card.lines || []).slice(0, 5);
   const boxY = 710;
   const boxH = 70 + lines.length * 64;
-  ctx.fillStyle = 'rgba(255,255,255,.14)';
+  ink(0.14);
   rr(ctx, 60, boxY, W - 120, boxH, 36);
   ctx.fill();
-  ctx.fillStyle = '#fff';
+  ink(1);
   ctx.font = `600 40px ${FONT}`;
   lines.forEach((l, i) => ctx.fillText(fit(ctx, l, W - 220), 110, boxY + 82 + i * 64));
 
@@ -84,6 +90,7 @@ export function drawCard(card) {
     ctx.font = `700 38px ${FONT}`;
     const text = fit(ctx, `🏆 ${pr}`, W - 200);
     const tw = ctx.measureText(text).width + 60;
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#ffd43b';
     rr(ctx, 60, y - 52, tw, 76, 24);
     ctx.fill();

@@ -2,7 +2,7 @@
 import { MOVEMENTS, BY_KEY } from './movements.js';
 import * as db from './db.js';
 
-export const APP_VERSION = '0.6.0';
+export const APP_VERSION = '0.6.1';
 
 export const DEFAULTS = {
   weight: 86,
@@ -19,8 +19,45 @@ export const DEFAULTS = {
   conds: {}, // 컨디션 { 'YYYY-MM-DD': { feel 1~5, sore: ['lower', ...], weight } }
   aliases: {}, // 사용자가 지정한 운동 이름 → key
   lastBackup: null,
+  skin: 'blue', // 디자인 시스템
+  mode: 'system', // 화면 모드: system / light / dark
 };
 export const S = { ...DEFAULTS };
+
+// ───────────────────────── 디자인 시스템
+// pv / pvDark: 미리보기 색 [배경, 카드, 포인트] (라이트 / 다크)
+export const SKINS = [
+  { key: 'blue', name: '블루', desc: '토스형 · 깔끔한 기본', pv: ['#f2f4f6', '#ffffff', '#3182f6'], pvDark: ['#17171c', '#202027', '#4c9aff'] },
+  { key: 'lime', name: '네온 라임', desc: '애플 피트니스 · 다크 모드 추천', pv: ['#f2f2f7', '#ffffff', '#3fa300'], pvDark: ['#000000', '#1c1c1e', '#b6ff3b'] },
+  { key: 'red', name: '바벨 레드', desc: '크로스핏 박스 · 차콜과 레드', pv: ['#f4f2f0', '#ffffff', '#d92d20'], pvDark: ['#121110', '#1e1c1b', '#ff4d3d'] },
+  { key: 'mono', name: '모노크롬', desc: '나이키 · 흑백만', pv: ['#f5f5f5', '#ffffff', '#111111'], pvDark: ['#0a0a0a', '#171717', '#fafafa'] },
+  { key: 'orange', name: '선셋 오렌지', desc: '스트라바 · 따뜻한 에너지', pv: ['#f7f5f2', '#ffffff', '#fc5200'], pvDark: ['#141210', '#201d1a', '#ff6a1f'] },
+];
+// 지금 화면이 다크인지 (설정 우선, 시스템 따라감)
+export const isDarkNow = () => S.mode === 'dark' || (S.mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+// <html> 에 data-skin / data-theme 적용 + 다음 실행 때 깜빡임 없도록 localStorage 에도 기록
+export function applyTheme() {
+  const r = document.documentElement;
+  if (S.skin && S.skin !== 'blue') r.dataset.skin = S.skin;
+  else delete r.dataset.skin;
+  if (S.mode === 'light' || S.mode === 'dark') r.dataset.theme = S.mode;
+  else delete r.dataset.theme;
+  try {
+    localStorage.setItem('wod-skin', S.skin || 'blue');
+    localStorage.setItem('wod-mode', S.mode || 'system');
+  } catch {}
+  // 상태 표시줄 색 = 현재 배경색
+  requestAnimationFrame(() => {
+    const page = getComputedStyle(r).getPropertyValue('--page').trim();
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', page));
+  });
+}
+// 현재 테마의 색 (공유 카드 등 캔버스용)
+export function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = n => cs.getPropertyValue(n).trim();
+  return { accent: v('--accent'), press: v('--accent-press'), ink: v('--accent-ink') };
+}
 
 export async function loadSettings() {
   for (const k of Object.keys(DEFAULTS)) S[k] = await db.getSetting(k, DEFAULTS[k]);
@@ -31,6 +68,7 @@ export async function loadSettings() {
     await saveSetting('unitsV2', true);
   }
   if (S.side !== 'max' && S.side !== 'min') await saveSetting('side', 'max');
+  applyTheme();
 }
 export async function saveSetting(k, v) {
   S[k] = v;

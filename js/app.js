@@ -10,7 +10,7 @@ import { lineChart } from './chart.js';
 import {
   S, APP_VERSION, loadSettings, saveSetting, $, view, esc, today, uid, body, kJ, watt, numStr, toNum, WEEK, dateLabel, dateLong,
   UNIT_LABEL, badge, isStrength, dispName, secLabel, secChip, LU, showLoad, readLoad, loadText, CHEV, haptic, paint, resetPaint,
-  stepper, qtyStep, loadStep, openSheet, openPanel, askConfirm, movementSheetItems, toast, sw,
+  stepper, qtyStep, loadStep, openSheet, openPanel, askConfirm, movementSheetItems, toast, sw, SKINS, applyTheme, themeColors, isDarkNow,
 } from './ui.js';
 
 // ───────────────────────── 표시 도우미
@@ -908,7 +908,7 @@ function cardOf(w) {
   return { date: dateLabel(w.date), title: workoutName(w), level: w.level, big, bigLabel, lines, prs };
 }
 async function shareWorkout(w) {
-  const r = await shareCard(cardOf(w));
+  const r = await shareCard({ ...cardOf(w), colors: themeColors() });
   if (r.shared || r.cancelled) return;
   await openPanel('공유 카드', `
     <img class="share-img" src="${r.url}" alt="공유 카드">
@@ -1299,6 +1299,19 @@ async function renderMe() {
     <div class="g-title"><span>컨디션 기록</span></div>
     ${conds.length ? `<div class="cells">${conds.map(([d, c]) => `<div class="cell"><span class="cell-label">${dateLabel(d)}</span><span class="spacer"></span><span class="cell-value">${[c.feel ? `${c.feel} ${FEEL[c.feel]}` : '', c.sore?.length ? c.sore.map(r => REGIONS[r]).join('·') : '', c.weight ? `${numStr(c.weight)}kg` : ''].filter(Boolean).join(' · ')}</span></div>`).join('')}</div>` : '<div class="cells"><a class="cell" href="#/"><span class="cell-label">오늘 탭에서 컨디션을 남겨 보세요</span><span class="spacer"></span>' + CHEV + '</a></div>'}
 
+    <div class="g-title"><span>디자인</span><span class="muted small">${esc(SKINS.find(s => s.key === S.skin)?.desc || '')}</span></div>
+    <div class="cells"><div class="cell col">
+      <div class="skins">${SKINS.map(s => {
+        const c = isDarkNow() ? s.pvDark : s.pv;
+        return `
+        <button type="button" class="skin ${S.skin === s.key ? 'on' : ''}" data-skin="${s.key}" aria-label="${esc(s.name)}">
+          <span class="pv" style="background:${c[0]}"><i class="big" style="background:${c[1]}"></i><i style="background:${c[1]}"></i><i style="background:${c[1]}"></i><b style="background:${c[2]}"></b></span>
+          <span>${esc(s.name)}</span>
+        </button>`;
+      }).join('')}</div>
+    </div>
+    <div class="cell"><span class="cell-label">화면 모드</span><span class="spacer"></span><div class="seg sm">${[['system', '시스템'], ['light', '라이트'], ['dark', '다크']].map(([v, l]) => `<label><input type="radio" name="mode" value="${v}" ${S.mode === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div></div>
+
     <div class="g-title"><span>목표</span></div>
     <div class="cells">
       <div class="cell"><span class="cell-label">주간 출석 목표</span><span class="spacer"></span>${stepper('id="goal"', S.weeklyGoal, 1, '회', 'sm')}</div>
@@ -1331,6 +1344,17 @@ async function renderMe() {
       <div class="cells">${aliases.map(([k, v]) => `<div class="cell"><span class="cell-label">${esc(k)}</span><span class="spacer"></span><span class="cell-value">${esc(BY_KEY[v]?.name || v)}</span><button class="icon" data-alias="${esc(k)}" aria-label="삭제">✕</button></div>`).join('')}</div>` : ''}
     <p class="muted small center" style="margin-top:20px">WOD Log v${APP_VERSION}</p>`, 'tab', 'me');
 
+  view().querySelectorAll('[data-skin]').forEach(b => (b.onclick = async () => {
+    await saveSetting('skin', b.dataset.skin);
+    applyTheme();
+    haptic();
+    renderMe();
+  }));
+  view().querySelectorAll('input[name=mode]').forEach(r => (r.onchange = async () => {
+    await saveSetting('mode', r.value);
+    applyTheme();
+    renderMe();
+  }));
   view().querySelectorAll('[data-lift]').forEach(b => (b.onclick = () => liftPanel(b.dataset.lift, all)));
   view().querySelectorAll('[data-gym]').forEach(b => (b.onclick = () => gymPanel(b.dataset.gym)));
   const num = (id, fn) => ($('#' + id).onchange = e => { const v = toNum(e.target.value); if (v > 0) fn(v); });
