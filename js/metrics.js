@@ -53,6 +53,17 @@ export function unitsDone(items, n) {
   return out;
 }
 
+// AMRAP 결과(라운드 + 추가 횟수) → 운동별 수행량
+// 사다리(1-2-3-…)처럼 라운드마다 횟수가 다르면 라운드 = 사다리 칸
+export function amrapUnits(items, rounds = 0, reps = 0) {
+  if (!items.some(it => (it.perRound?.length || 0) > 1)) {
+    const part = unitsDone(items, reps);
+    return items.map((it, i) => rounds * (it.qty || 0) + part[i]);
+  }
+  const n = items.reduce((s, it) => s + (it.perRound || [it.qty || 0]).slice(0, rounds).reduce((a, c) => a + c, 0), 0);
+  return unitsDone(items, n + reps);
+}
+
 function workForUnits(items, wpus, n) {
   return unitsDone(items, n).reduce((s, u, i) => s + u * (wpus[i] || 0), 0);
 }
@@ -68,7 +79,7 @@ export function blockStats(block, body) {
 
   if (block.format === 'amrap') {
     if (r.rounds != null || r.reps != null) {
-      workJ = (r.rounds || 0) * roundWork + workForUnits(items, wpus, r.reps || 0);
+      workJ = amrapUnits(items, r.rounds || 0, r.reps || 0).reduce((s, u, i) => s + u * (wpus[i] || 0), 0);
       timeSec = block.capSec;
     }
   } else if (r.capped) {

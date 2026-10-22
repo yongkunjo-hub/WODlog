@@ -179,6 +179,29 @@ export function detectPRs(w, history, body, fmtLoad = kg => `${Math.round(kg / L
   return prs;
 }
 
+// ───────────────────────── 카페 WOD 암호화 (공개 저장소에 회원 전용 글을 그대로 두지 않기 위해)
+// 형식: { v: 1, iter, salt, iv, ct } (base64). 키 = PBKDF2-SHA256(암호, salt, iter) → AES-GCM 256
+// PC 동기화 도구(sync/cafe_sync.py 의 ENC_JS)와 같은 방식
+const b64 = u8 => btoa(Array.from(u8, c => String.fromCharCode(c)).join(''));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function deriveKey(pass, salt, iter, usage) {
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, [usage]);
+}
+export async function encryptJSON(obj, pass, iter = 200000) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pass, salt, iter, 'encrypt');
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj))));
+  return { v: 1, iter, salt: b64(salt), iv: b64(iv), ct: b64(ct) };
+}
+// 암호가 틀리면 OperationError
+export async function decryptJSON(enc, pass) {
+  const key = await deriveKey(pass, unb64(enc.salt), enc.iter, 'decrypt');
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(enc.iv) }, key, unb64(enc.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
 // ───────────────────────── 근육 부위 (컨디션 근육통 → 와드 경고)
 export const REGIONS = { lower: '하체', upper: '상체', core: '코어', grip: '그립' };
 const R = {

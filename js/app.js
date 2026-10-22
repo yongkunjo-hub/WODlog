@@ -3,7 +3,7 @@ import { BY_KEY, priorPace } from './movements.js';
 import { workoutStats, parseTime, fmtTime, growthIndex, logTrend, strengthSummary, e1rm } from './metrics.js';
 import { recommend, fitPaces } from './recommend.js';
 import { BENCHMARKS, BENCH_BY_ID, BENCH_CATS, detectBenchmark } from './benchmarks.js';
-import { weekProgress, liftBoard, GYM_MAX, parsePercents, percentTable, plates, resultText, scoreOf, bestOf, detectPRs, REGIONS, addDays, weekStart } from './features.js';
+import { weekProgress, liftBoard, GYM_MAX, parsePercents, percentTable, plates, resultText, scoreOf, bestOf, detectPRs, REGIONS, addDays, decryptJSON } from './features.js';
 import { shareCard } from './share.js';
 import * as db from './db.js';
 import { lineChart } from './chart.js';
@@ -16,6 +16,8 @@ import {
 // ───────────────────────── 표시 도우미
 // 라운드 구성 힌트: 21-15-9 / 21×3 / 내 몫 7R / 2구간
 function perRoundHint(it, b) {
+  if (it.ladder) return it.ladder;
+  if (it.perRoundQty != null) return '매 라운드';
   const pr = it.perRound;
   if (!pr?.length) return '';
   const nz = pr.filter(x => x > 0);
@@ -28,7 +30,8 @@ function perRoundHint(it, b) {
 }
 function itemText(it, b) {
   const def = it.key && BY_KEY[it.key];
-  let s = `${numStr(it.qty)}${it.unit === 'reps' ? '' : ' ' + UNIT_LABEL[it.unit]} ${esc(dispName(it))}`;
+  const q = it.ladder ? '' : it.max && !it.qty ? 'Max' : numStr(it.perRoundQty ?? it.qty);
+  let s = `${q}${it.unit === 'reps' || !q ? '' : ' ' + UNIT_LABEL[it.unit]} ${esc(dispName(it))}`;
   const hint = perRoundHint(it, b);
   if (hint) s += ` <span class="muted">(${hint})</span>`;
   if (def?.equip && it.load) s += ` <span class="muted">· ${loadText(it.load)}${(it.implements || 1) > 1 ? ' ×' + it.implements : ''}</span>`;
@@ -38,7 +41,7 @@ function itemText(it, b) {
 }
 // 처방 요약 (레벨 선택 카드용)
 function prescText(it, side) {
-  const q = it.pattern ? it.pattern.join('-') : pick(it.qty, side) ?? '';
+  const q = it.ladder || (it.pattern ? it.pattern.join('-') : pick(it.qty, side) ?? (it.max ? 'Max' : ''));
   const u = it.unit === 'cal' ? 'cal' : it.unit === 'm' ? 'm' : '';
   const alt = it.alt ? ` ⇄ ${pick(it.alt.qty, side) ?? ''} ${esc(dispName(it.alt))}` : '';
   return `${q}${u} ${esc(dispName(it))}${it.key ? '' : ' ❓'}${alt}`;
@@ -85,6 +88,7 @@ const routes = [
   [/^#\/new$/, renderNew],
   [/^#\/stats$/, renderStats],
   [/^#\/me$/, renderMe],
+  [/^#\/cafe$/, renderCafe],
   [/^#\/m\/(.+)$/, renderMove],
   [/^#\/w\/(.+)$/, renderDetail],
   [/^#\/edit\/(.+)$/, renderEdit],
@@ -278,7 +282,7 @@ async function deletePlan(id) {
 }
 async function persistDay() {
   if (!day?.planId) return;
-  await putPlan({ id: day.planId, date: day.date, raw: day.raw, benchmark: day.benchmark || null, saved: Object.fromEntries(day.saved), drafts: day.drafts || {}, createdAt: day.createdAt });
+  await putPlan({ id: day.planId, date: day.date, raw: day.raw, benchmark: day.benchmark || null, saved: Object.fromEntries(day.saved), drafts: day.drafts || {}, createdAt: day.createdAt, cafeId: day.cafeId || null, subject: day.subject || null });
 }
 let persistTimer;
 function persistDraft() {
@@ -290,7 +294,7 @@ function persistDraft() {
 }
 function openPlan(plan) {
   const p = parseWod(plan.raw, { aliases: S.aliases, units: S.units });
-  day = { ...p, date: plan.date, raw: plan.raw, benchmark: plan.benchmark, planId: plan.id, createdAt: plan.createdAt, saved: new Map(Object.entries(plan.saved || {}).map(([k, v]) => [+k, v])), drafts: plan.drafts || {} };
+  day = { ...p, date: plan.date, raw: plan.raw, benchmark: plan.benchmark, planId: plan.id, createdAt: plan.createdAt, cafeId: plan.cafeId, subject: plan.subject, saved: new Map(Object.entries(plan.saved || {}).map(([k, v]) => [+k, v])), drafts: plan.drafts || {} };
   resetPaint();
   if (day.sections.length === 1) openSection(0);
   else renderDay();
@@ -305,7 +309,7 @@ function planSummary(plan) {
   const v = p.versions.find(x => x.kind === 'metcon') || p.versions[0];
   const moves = v ? [...new Set((v.kind === 'strength' ? v.items : v.blocks.flatMap(b => b.items)).map(i => i.label || i.name))].slice(0, 4).join(' · ') : '';
   const needLevel = p.sections.some((s, i) => s.versions.length > 1 && !plan.saved?.[i] && !plan.drafts?.[i]);
-  const status = [p.sections.length > 1 ? `${done}/${p.sections.length} 기록` : '', drafting ? '작성 중' : '', needLevel ? '레벨 선택 전' : ''].filter(Boolean);
+  const status = [plan.cafeId ? '카페' : '', p.sections.length > 1 ? `${done}/${p.sections.length} 기록` : '', drafting ? '작성 중' : '', needLevel ? '레벨 선택 전' : ''].filter(Boolean);
   return { title, moves, status };
 }
 function plansHtml(plans, recs = {}) {
@@ -342,6 +346,80 @@ function bindPlans(plans, rerender) {
   }));
 }
 
+// ───────────────────────── 카페 WOD 자동 불러오기
+// PC 동기화 도구가 암호화해 올린 wods.json 을 받아 복호화 → 어제~내일 WOD를 기록 대기에 추가
+let cafeData = null;
+async function cafeFetch({ quiet = true } = {}) {
+  if (!S.cafeKey) return null;
+  try {
+    const r = await fetch(`./wods.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status === 404 ? '아직 동기화된 WOD가 없어요' : `서버 응답 ${r.status}`);
+    cafeData = await decryptJSON(await r.json(), S.cafeKey);
+    await db.setSetting('cafeWods', cafeData); // 오프라인용 보관
+  } catch (e) {
+    cafeData = cafeData || (await db.getSetting('cafeWods', null));
+    if (!quiet) toast(e.name === 'OperationError' ? '카페 암호가 PC 설정과 달라요' : `카페 WOD를 못 받았어요 · ${e.message}`);
+  }
+  return cafeData;
+}
+async function planFromCafe(w) {
+  const plans = await getPlans();
+  const found = plans.find(p => p.cafeId === w.id || p.raw.trim() === w.text.trim());
+  if (found) return found;
+  const plan = { id: uid(), date: w.date || today(), raw: w.text, benchmark: detectBenchmark(w.text), saved: {}, drafts: {}, createdAt: Date.now(), cafeId: w.id, subject: w.subject };
+  await putPlan(plan);
+  return plan;
+}
+async function cafeAutoImport() {
+  const data = await cafeFetch();
+  if (!data?.wods) return 0;
+  const t = today();
+  const imported = new Set(S.cafeImported || []);
+  const recorded = new Set((await db.listWorkouts()).map(w => w.date));
+  let n = 0;
+  for (const w of data.wods) {
+    if (imported.has(w.id)) continue;
+    if (!w.date || w.date < addDays(t, -1) || w.date > addDays(t, 1)) continue;
+    imported.add(w.id);
+    // 이미 그날 기록을 남겼거나 운동을 못 찾은 글(공지 등)은 건너뜀
+    if (recorded.has(w.date) || !parseWod(w.text, { aliases: S.aliases, units: S.units }).versions.length) continue;
+    await planFromCafe(w);
+    n++;
+  }
+  await saveSetting('cafeImported', [...imported].slice(-300));
+  return n;
+}
+
+async function renderCafe() {
+  const data = await cafeFetch({ quiet: false });
+  const plans = await getPlans();
+  const list = (data?.wods || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  paint(`
+    <header class="bar"><button class="back" id="back">‹</button><h1>카페 WOD</h1><span class="spacer"></span><button class="icon" id="reload" aria-label="새로고침">↻</button></header>
+    ${!S.cafeKey ? `
+      <div class="cells"><a class="cell" href="#/me"><span class="cell-main"><span class="cell-label">카페 암호를 먼저 입력해 주세요</span><span class="cell-sub">내 정보 → 카페 자동 불러오기 (PC 동기화 도구와 같은 암호)</span></span>${CHEV}</a></div>`
+    : !list.length ? '<div class="card empty small-empty"><p class="muted">아직 받은 WOD가 없어요. PC 동기화가 한 번 돌아야 해요.</p></div>' : `
+      <p class="g-foot top">${data.updated ? `PC 동기화 ${new Date(data.updated).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` : ''}최근 ${list.length}개</p>
+      <div class="card list-group">${list.map(w => {
+        const dt = w.date ? new Date(w.date + 'T00:00:00') : null;
+        const inPlan = plans.some(p => p.cafeId === w.id);
+        return `
+          <a class="li" data-cafe="${w.id}" href="javascript:void 0">
+            <div class="li-date ${w.date === today() ? 'accent' : ''}"><b>${dt ? dt.getDate() : '-'}</b><span>${dt ? WEEK[dt.getDay()] : ''}</span></div>
+            <div class="li-body"><div class="li-title"><span class="t">${esc(w.subject)}</span></div>
+              <div class="li-sub">${esc(w.text.split('\n').filter(l => l.trim()).slice(0, 3).join(' · '))}</div></div>
+            ${inPlan ? '<span class="chip-kind">대기 중</span>' : CHEV}
+          </a>`;
+      }).join('')}</div>`}`, 'sub', 'cafe');
+  $('#back').onclick = () => (location.hash === '#/new' ? renderNew() : goHome());
+  $('#reload').onclick = () => renderCafe();
+  view().querySelectorAll('[data-cafe]').forEach(el => (el.onclick = async () => {
+    const w = list.find(x => String(x.id) === el.dataset.cafe);
+    editing = false;
+    openPlan(await planFromCafe(w));
+  }));
+}
+
 async function renderNew() {
   draft = null;
   day = null;
@@ -359,12 +437,14 @@ async function renderNew() {
       </div>
     </div>
     <div class="cells">
+      <button class="cell" id="cafe"><span class="cell-icon">☕</span><span class="cell-main"><span class="cell-label">카페 WOD에서 선택</span><span class="cell-sub">${S.cafeKey ? 'PC가 동기화한 박스 카페 글' : '암호를 설정하면 박스 카페 글을 불러와요'}</span></span>${CHEV}</button>
       <button class="cell" id="bench"><span class="cell-icon">🏆</span><span class="cell-main"><span class="cell-label">벤치마크에서 선택</span><span class="cell-sub">Girls · Hero · Open · Games ${BENCHMARKS.length}개</span></span>${CHEV}</button>
       <button class="cell" id="manual"><span class="cell-icon">✎</span><span class="cell-main"><span class="cell-label">원문 없이 직접 입력</span></span>${CHEV}</button>
     </div>
     ${plansHtml(plans)}`, 'tab', 'new');
   bindPlans(plans, renderNew);
   $('#bench').onclick = () => renderBench();
+  $('#cafe').onclick = () => renderCafe();
   $('#clip').onclick = async () => {
     try {
       $('#raw').value = await navigator.clipboard.readText();
@@ -571,7 +651,7 @@ function itemCell(it, b, bi, ii) {
   }
   const def = BY_KEY[it.key];
   const sub = [perRoundHint(it, b), it.boxIn ? `${it.boxIn}in` : '', it.sync ? 'Sync' : '', it.alt ? `⇄ ${dispName(it.alt)}` : ''].filter(Boolean).join(' · ');
-  const right = [`${numStr(it.qty) || '-'}${it.unit === 'reps' ? '회' : ' ' + UNIT_LABEL[it.unit]}`, def.equip && it.load ? `${loadText(it.load)}${(it.implements || 1) > 1 ? ' ×' + it.implements : ''}` : ''].filter(Boolean).join(' · ');
+  const right = [it.ladder ? '사다리' : it.max && !it.qty ? 'Max' : `${numStr(it.perRoundQty ?? it.qty) || '-'}${it.unit === 'reps' ? '회' : ' ' + UNIT_LABEL[it.unit]}`, def.equip && it.load ? `${loadText(it.load)}${(it.implements || 1) > 1 ? ' ×' + it.implements : ''}` : ''].filter(Boolean).join(' · ');
   return `<button class="cell" data-act="edit-item" data-b="${bi}" data-i="${ii}"><span class="cell-main"><span class="cell-label">${esc(dispName(it))}</span>${sub ? `<span class="cell-sub">${esc(sub)}</span>` : ''}</span><span class="cell-value">${esc(right)}</span>${CHEV}</button>`;
 }
 function resultCells(b, bi, label = '') {
@@ -763,6 +843,8 @@ function setQty(it, n) {
     it.perRound = scaled;
   }
   it.qty = n;
+  delete it.perRoundQty;
+  delete it.ladder;
 }
 function addItem(b, key) {
   const def = BY_KEY[key];
@@ -1299,6 +1381,12 @@ async function renderMe() {
     <div class="g-title"><span>컨디션 기록</span></div>
     ${conds.length ? `<div class="cells">${conds.map(([d, c]) => `<div class="cell"><span class="cell-label">${dateLabel(d)}</span><span class="spacer"></span><span class="cell-value">${[c.feel ? `${c.feel} ${FEEL[c.feel]}` : '', c.sore?.length ? c.sore.map(r => REGIONS[r]).join('·') : '', c.weight ? `${numStr(c.weight)}kg` : ''].filter(Boolean).join(' · ')}</span></div>`).join('')}</div>` : '<div class="cells"><a class="cell" href="#/"><span class="cell-label">오늘 탭에서 컨디션을 남겨 보세요</span><span class="spacer"></span>' + CHEV + '</a></div>'}
 
+    <div class="g-title"><span>카페 자동 불러오기</span><span class="muted small">얼티밋트레이닝 이수점</span></div>
+    <div class="cells">
+      <div class="cell"><span class="cell-main"><span class="cell-label">카페 암호</span><span class="cell-sub">PC 동기화 도구에 넣은 것과 같은 값</span></span><span class="spacer"></span><input id="cafeKey" class="inline-in pass" type="password" autocomplete="off" placeholder="암호" value="${esc(S.cafeKey)}"></div>
+      <button class="cell" id="cafeCheck"><span class="cell-main"><span class="cell-label">지금 확인</span><span class="cell-sub" id="cafeStatus">${S.cafeKey ? '눌러서 새 WOD 확인' : '암호를 넣으면 앱을 열 때마다 자동으로 확인해요'}</span></span>${CHEV}</button>
+    </div>
+
     <div class="g-title"><span>디자인</span><span class="muted small">${esc(SKINS.find(s => s.key === S.skin)?.desc || '')}</span></div>
     <div class="cells"><div class="cell col">
       <div class="skins">${SKINS.map(s => {
@@ -1344,6 +1432,19 @@ async function renderMe() {
       <div class="cells">${aliases.map(([k, v]) => `<div class="cell"><span class="cell-label">${esc(k)}</span><span class="spacer"></span><span class="cell-value">${esc(BY_KEY[v]?.name || v)}</span><button class="icon" data-alias="${esc(k)}" aria-label="삭제">✕</button></div>`).join('')}</div>` : ''}
     <p class="muted small center" style="margin-top:20px">WOD Log v${APP_VERSION}</p>`, 'tab', 'me');
 
+  $('#cafeKey').onchange = async e => {
+    await saveSetting('cafeKey', e.target.value.trim());
+    toast('카페 암호를 저장했어요');
+  };
+  $('#cafeCheck').onclick = async () => {
+    if (!S.cafeKey) return toast('카페 암호를 먼저 입력해 주세요');
+    $('#cafeStatus').textContent = '확인 중…';
+    const data = await cafeFetch({ quiet: false });
+    const n = await cafeAutoImport();
+    $('#cafeStatus').textContent = data?.wods
+      ? `최근 ${data.wods.length}개 · PC 동기화 ${new Date(data.updated).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${n ? ` · 기록 대기에 ${n}개 추가` : ''}`
+      : '받은 WOD가 없어요';
+  };
   view().querySelectorAll('[data-skin]').forEach(b => (b.onclick = async () => {
     await saveSetting('skin', b.dataset.skin);
     applyTheme();
@@ -1465,5 +1566,18 @@ async function start() {
   }));
   await route();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // 카페 WOD: 앱을 열 때 + 다시 앞으로 올 때(30분 간격) 확인
+  let lastCafe = 0;
+  const checkCafe = async () => {
+    if (!S.cafeKey || Date.now() - lastCafe < 30 * 60 * 1000) return;
+    lastCafe = Date.now();
+    const n = await cafeAutoImport();
+    if (n) {
+      toast(`카페에서 오늘 WOD를 불러왔어요 (${n}개)`);
+      if (['', '#', '#/'].includes(location.hash)) route();
+    }
+  };
+  checkCafe();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkCafe(); });
 }
 start();

@@ -2,7 +2,7 @@
 import { MOVEMENTS, BY_KEY } from './movements.js';
 import * as db from './db.js';
 
-export const APP_VERSION = '0.6.1';
+export const APP_VERSION = '0.7.0';
 
 export const DEFAULTS = {
   weight: 86,
@@ -10,15 +10,18 @@ export const DEFAULTS = {
   side: 'max', // 처방 A/B 중 선택: 'max' 남자(큰 값) / 'min' 여자(작은 값)
   levels: ['RX', 'RED', 'YELLOW', 'WHITE', 'RAINBOW'],
   baseLevel: null, // 기록이 없을 때 추천 출발점
-  units: { bb: 'lb', ball: 'lb', db: 'lb', kb: 'lb', other: 'lb' }, // 단위 없는 무게 해석
+  units: { bb: 'lb', ball: 'lb', db: 'kg', kb: 'lb', other: 'lb' }, // 단위 없는 무게 해석 (덤벨만 kg: 박스 표기 22.5/15)
   loadUnit: 'lb', // 화면 표시·입력 단위 (저장은 kg)
   unitsV2: false,
+  unitsV3: false,
   weeklyGoal: 3, // 주간 출석 목표
   rm: {}, // 직접 입력한 1RM/3RM/5RM { key: { rm1, rm3, rm5 } } (kg)
   gmax: {}, // 체조 최대 횟수 { key: 회 }
   conds: {}, // 컨디션 { 'YYYY-MM-DD': { feel 1~5, sore: ['lower', ...], weight } }
   aliases: {}, // 사용자가 지정한 운동 이름 → key
   lastBackup: null,
+  cafeKey: '', // 카페 WOD 복호화 암호 (PC 동기화 도구와 같은 값)
+  cafeImported: [], // 기록 대기에 자동 추가한 카페 글 id
   skin: 'blue', // 디자인 시스템
   mode: 'system', // 화면 모드: system / light / dark
 };
@@ -59,6 +62,27 @@ export function themeColors() {
   return { accent: v('--accent'), press: v('--accent-press'), ink: v('--accent-ink') };
 }
 
+// 저장된 기록에서 "22.5/15 lb"처럼 단위 없이 lb로 해석된 덤벨 무게를 kg 숫자로 바꿈 (원문에 lb·#가 적힌 건 그대로)
+async function migrateDbLoads() {
+  const LBK = 0.45359237;
+  for (const w of await db.listWorkouts()) {
+    let changed = false;
+    const fix = it => {
+      if (!it || BY_KEY[it.key]?.equip !== 'db' || !it.load || !/^[\d.\/]+ lb$/.test(it.loadSrc || '')) return;
+      const num = it.loadSrc.split(' ')[0];
+      const esc = num.replace(/[./]/g, c => `\\${c}`);
+      if (new RegExp(`${esc}\\s*(lb|#|pound)`, 'i').test(w.raw || '')) return;
+      it.load = Math.round((it.load / LBK) * 1000) / 1000;
+      if (it.rxLoad) it.rxLoad = it.rxLoad.map(x => (x == null ? x : Math.round((x / LBK) * 1000) / 1000));
+      it.loadSrc = `${num} kg`;
+      changed = true;
+    };
+    for (const b of w.blocks || []) for (const it of b.items || []) { fix(it); fix(it.alt); }
+    for (const it of w.strength?.items || []) fix(it);
+    if (changed) await db.putWorkout(w);
+  }
+}
+
 export async function loadSettings() {
   for (const k of Object.keys(DEFAULTS)) S[k] = await db.getSetting(k, DEFAULTS[k]);
   S.units = { ...DEFAULTS.units, ...S.units };
@@ -66,6 +90,12 @@ export async function loadSettings() {
     await saveSetting('units', { ...DEFAULTS.units });
     await saveSetting('loadUnit', 'lb');
     await saveSetting('unitsV2', true);
+  }
+  if (!S.unitsV3) {
+    // v0.7: 단위 없는 덤벨 무게는 kg. 이미 lb로 해석해 저장한 덤벨 기록도 kg 숫자로 고침
+    await saveSetting('units', { ...S.units, db: 'kg' });
+    await migrateDbLoads();
+    await saveSetting('unitsV3', true);
   }
   if (S.side !== 'max' && S.side !== 'min') await saveSetting('side', 'max');
   applyTheme();

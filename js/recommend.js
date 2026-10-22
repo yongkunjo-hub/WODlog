@@ -11,7 +11,7 @@
 // 캡이 넉넉한 박스는 시간보다 RPE 가 레벨을 결정하므로 ①②를 주 기준으로, 시간은 ③에만 쓴다
 
 import { BY_KEY, REF_LOAD, TRANSITION_SEC, priorPace } from './movements.js';
-import { workPerUnit, unitsDone } from './metrics.js';
+import { workPerUnit, unitsDone, amrapUnits } from './metrics.js';
 import { pick, resolveBlocks } from './parser.js';
 import { soreHits } from './features.js';
 
@@ -46,8 +46,7 @@ export function observed(block) {
   const walk = n => unitsDone(items, Math.max(n, 0));
   if (block.format === 'amrap') {
     if ((r.rounds == null && r.reps == null) || !block.capSec) return null;
-    const part = walk(r.reps || 0);
-    return { units: qty.map((q, i) => (r.rounds || 0) * q + part[i]), T: block.capSec };
+    return { units: amrapUnits(items, r.rounds || 0, r.reps || 0), T: block.capSec };
   }
   if (r.capped) {
     if (r.repsDone == null || !block.capSec) return null;

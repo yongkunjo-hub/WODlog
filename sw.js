@@ -1,6 +1,6 @@
 // 오프라인 지원: 앱 파일을 캐시하고, 온라인이면 백그라운드에서 최신본으로 갱신
 // 앱 파일을 수정해 배포할 때 VERSION 을 올리면 이전 캐시가 정리됨
-const VERSION = 'wodlog-v0.6.1';
+const VERSION = 'wodlog-v0.7.0';
 const FILES = [
   './',
   'index.html',
@@ -52,6 +52,18 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.origin !== location.origin) return;
+  // 카페 WOD(PC 동기화 결과)는 항상 최신본 우선, 오프라인이면 마지막으로 받은 것
+  if (url.pathname.endsWith('/wods.json')) {
+    e.respondWith(
+      caches.open(VERSION).then(cache => fetch(e.request)
+        .then(res => {
+          if (res.ok) cache.put(url.pathname, res.clone());
+          return res;
+        })
+        .catch(() => cache.match(url.pathname))),
+    );
+    return;
+  }
   e.respondWith(
     caches.open(VERSION).then(async cache => {
       const cached = await cache.match(e.request, { ignoreSearch: true });
