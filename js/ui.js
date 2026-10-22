@@ -1,8 +1,8 @@
-// 공통 UI 도구: 설정 · 포맷 · 화면 그리기 · 시트/패널 · 스테퍼 · 토스트
+﻿// 공통 UI 도구: 설정 · 포맷 · 화면 그리기 · 시트/패널 · 스테퍼 · 토스트
 import { MOVEMENTS, BY_KEY } from './movements.js';
 import * as db from './db.js';
 
-export const APP_VERSION = '0.7.0';
+export const APP_VERSION = '0.7.1';
 
 export const DEFAULTS = {
   weight: 86,

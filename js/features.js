@@ -136,6 +136,46 @@ export const cmpScore = (a, b) => {
 };
 export const bestOf = ws => (ws.length ? [...ws].sort(cmpScore)[0] : null);
 
+// ───────────────────────── 같은 동작이 나온 기록 (비교용)
+export const workoutKeys = w => [...new Set((w.kind === 'strength' ? w.strength?.items || [] : (w.blocks || []).flatMap(b => b.items || [])).map(i => i.key).filter(Boolean))];
+
+// 그 기록에서 해당 동작을 한 양: 총 횟수(내 몫)·최고 무게
+export function moveUse(w, key) {
+  if (w.kind === 'strength') {
+    if (!w.strength?.items?.some(i => i.key === key)) return null;
+    const sets = w.strength.setResults || [];
+    return { unit: 'reps', qty: sets.reduce((a, s) => a + (s.reps || 0), 0), load: Math.max(0, ...sets.map(s => s.load || 0)) || null, sets: sets.length };
+  }
+  let qty = 0;
+  let load = null;
+  let unit = 'reps';
+  let found = false;
+  for (const b of w.blocks || []) for (const it of b.items || []) {
+    if (it.key !== key) continue;
+    found = true;
+    qty += it.qty || 0;
+    unit = it.unit || unit;
+    if (it.load) load = Math.max(load || 0, it.load);
+  }
+  return found ? { unit, qty, load } : null;
+}
+
+// 겹치는 동작이 많은 순 → (같은 종류: 메트콘/스트렝스) → 그 기록에서 겹친 비율 → 최근 순
+export function similarRecords(keys, workouts, { excludeId = null, before = null, kind = null, limit = 5 } = {}) {
+  const want = new Set(keys.filter(Boolean));
+  if (!want.size) return [];
+  return workouts
+    .filter(w => w.id !== excludeId && (!before || w.date <= before))
+    .map(w => {
+      const ks = workoutKeys(w);
+      const shared = ks.filter(k => want.has(k));
+      return { w, shared, ratio: ks.length ? shared.length / ks.length : 0, same: !kind || (w.kind === 'strength') === (kind === 'strength') };
+    })
+    .filter(x => x.shared.length)
+    .sort((a, b) => b.shared.length - a.shared.length || b.same - a.same || b.ratio - a.ratio || b.w.date.localeCompare(a.w.date) || (b.w.createdAt || 0) - (a.w.createdAt || 0))
+    .slice(0, limit);
+}
+
 // ───────────────────────── PR 감지 (저장 직전 기록 w 를 이전 기록들과 비교)
 // 반환: [{ kind: 'load'|'e1rm'|'complex'|'bench'|'power', name, value, prev, text }]
 export function detectPRs(w, history, body, fmtLoad = kg => `${Math.round(kg / LB)} lb`) {

@@ -3,7 +3,7 @@ import { BY_KEY, priorPace } from './movements.js';
 import { workoutStats, parseTime, fmtTime, growthIndex, logTrend, strengthSummary, e1rm } from './metrics.js';
 import { recommend, fitPaces } from './recommend.js';
 import { BENCHMARKS, BENCH_BY_ID, BENCH_CATS, detectBenchmark } from './benchmarks.js';
-import { weekProgress, liftBoard, GYM_MAX, parsePercents, percentTable, plates, resultText, scoreOf, bestOf, detectPRs, REGIONS, addDays, decryptJSON } from './features.js';
+import { weekProgress, liftBoard, GYM_MAX, parsePercents, percentTable, plates, resultText, scoreOf, bestOf, detectPRs, REGIONS, addDays, decryptJSON, similarRecords, moveUse, workoutKeys } from './features.js';
 import { shareCard } from './share.js';
 import * as db from './db.js';
 import { lineChart } from './chart.js';
@@ -612,6 +612,8 @@ async function renderPick() {
   const history = (await db.listWorkouts()).filter(w => !isStrength(w) && w.date <= date);
   const cond = S.conds[date];
   const rec = recommend({ versions: s.versions, workouts: history, levels: S.levels, side, body: body(date), defaultLevel: S.baseLevel, now: Date.parse(date + 'T12:00:00'), fmtLoad: loadText, condition: cond });
+  const keys = [...new Set(s.versions.flatMap(v => (v.kind === 'strength' ? v.items : v.blocks.flatMap(b => b.items)).map(i => i.key)))];
+  const similar = await similarHtml(keys, { before: date, kind: s.versions[0].kind });
   paint(`
     <header class="bar"><button class="back" id="back">‹</button><h1>레벨 선택</h1>${secChip(secLabel(s))}</header>
     ${rec ? `
@@ -635,7 +637,8 @@ async function renderPick() {
           <div class="pred"><span class="muted">예상 ${(v.repeat ? [p.blocks[0]] : p.blocks).map(b => fmtTime(b.sec)).join(' · ')}${v.repeat ? ` ×${v.blocks.length}` : ''}</span>${p.status ? `<span class="st ${p.status}">${STATUS[p.status]}</span>` : ''}
           ${p.loadFlags.filter(f => f.kind === 'over').map(f => `<span class="flag">▲ ${esc(f.name)} 최고 ${loadText(f.max)}</span>`).join('')}</div>` : ''}
       </button>`;
-    }).join('')}`, 'sub', 'pick');
+    }).join('')}
+    ${similar}`, 'sub', 'pick');
   $('#back').onclick = () => (day.sections.length > 1 ? renderDay() : day.planId ? goHome() : renderNew());
   view().querySelectorAll('.vcard').forEach(el => (el.onclick = () => startDraft(+el.dataset.i)));
 }
@@ -719,8 +722,10 @@ function renderForm(isEdit) {
       ${d.repeat ? '' : '<button class="ghost wide" data-act="add-block">＋ 블록 추가</button>'}
       ${commonTail(d, true)}
       <div class="card summary" id="sum"></div>
+      <div id="similar"></div>
       <div class="cta-bar"><button class="primary wide" data-act="save">저장</button></div>
     </div>`, 'sub', 'form');
+  fillSimilar(workoutKeys(d), { excludeId: d.id, before: d.date, kind: 'metcon' });
 
   const root = $('#form');
   root.addEventListener('input', e => {
@@ -1059,8 +1064,10 @@ function renderStrengthForm(isEdit) {
       </div>
       <p class="g-foot" id="ssum"></p>
       ${commonTail(d, false)}
+      <div id="similar"></div>
       <div class="cta-bar"><button class="primary wide" data-act="save">저장</button></div>
     </div>`, 'sub', 'strength');
+  fillSimilar(workoutKeys(d), { excludeId: d.id, before: d.date, kind: 'strength' });
 
   const root = $('#form');
   const upd = () => {
@@ -1129,6 +1136,7 @@ async function renderDetail(id) {
     ${w.notes ? `<div class="g-title"><span>메모</span></div><div class="cells"><div class="cell"><p class="pre">${esc(w.notes)}</p></div></div>` : ''}
     ${w.raw ? `<details class="card raw"><summary>원문 보기</summary><pre>${esc(w.raw)}</pre></details>` : ''}`;
   const head = extra => `<header class="bar"><a class="back" href="#/">‹</a><h1>${dateLabel(w.date)}</h1>${extra}<span class="spacer"></span><button class="icon share-btn" id="share" aria-label="공유">${SHARE_ICON}</button></header>`;
+  const similar = await similarHtml(workoutKeys(w), { excludeId: w.id, kind: w.kind, link: true });
   const buttons = `
     <div class="cta-bar"><div class="btns">
       <button class="danger" id="del" style="flex:0 0 30%">삭제</button>
@@ -1147,7 +1155,7 @@ async function renderDetail(id) {
       ${prHtml}
       <div class="g-title"><span>${esc(workoutName(w))}</span></div>
       <div class="cells">${w.strength.setResults.map((r, i) => `<div class="cell"><span class="set-n">${i + 1}</span><span class="cell-label">${loadText(r.load)} × ${numStr(r.reps)}</span><span class="spacer"></span>${ss?.single && r.load ? `<span class="cell-value">e1RM ${loadText(e1rm(r.load, r.reps || 1))}</span>` : ''}</div>`).join('')}</div>
-      ${tail}${buttons}`, 'sub', 'detail');
+      ${tail}${similar}${buttons}`, 'sub', 'detail');
   } else {
     const st = workoutStats(w, body(w.date));
     const blockGroup = (b, i, label) => `
@@ -1175,6 +1183,7 @@ async function renderDetail(id) {
       ${blocks}
       ${tail}
       ${st.excluded.length ? `<p class="g-foot">일량 계산 제외: ${esc(st.excluded.join(', '))}</p>` : ''}
+      ${similar}
       ${buttons}`, 'sub', 'detail');
   }
   $('#share').onclick = () => shareWorkout(w);
@@ -1184,6 +1193,63 @@ async function renderDetail(id) {
     toast('삭제했습니다');
     goHome();
   };
+}
+
+// 입력 폼은 다시 그리는 일이 잦아 비교 목록을 나중에 채움 (이전에 펼친 줄은 유지)
+let simOpen = null; // 펼쳐 둔 비교 기록 id
+async function fillSimilar(keys, opts) {
+  if (!$('#similar')) return;
+  const html = await similarHtml(keys, opts);
+  const el = $('#similar');
+  if (!el) return;
+  el.innerHTML = html;
+  el.querySelectorAll('details.sim').forEach(d => {
+    if (d.dataset.id === simOpen) d.open = true;
+    d.addEventListener('toggle', () => { simOpen = d.open ? d.dataset.id : simOpen === d.dataset.id ? null : simOpen; });
+  });
+}
+
+// 같은 동작이 나온 지난 기록 (비교용): 줄을 누르면 그 자리에서 펼쳐 처방·결과를 보여 줌
+async function similarHtml(keys, { excludeId = null, before = null, kind = null, link = false } = {}) {
+  const list = similarRecords(keys, await db.listWorkouts(), { excludeId, before, kind, limit: 5 });
+  if (!list.length) return '';
+  const useText = (w, k) => {
+    const u = moveUse(w, k);
+    if (!u) return '';
+    const amount = u.sets ? `${u.sets}세트` : u.qty ? `${numStr(u.qty)}${u.unit === 'reps' ? '회' : UNIT_LABEL[u.unit]}` : '';
+    return [BY_KEY[k].name, u.load ? loadText(u.load) : '', amount].filter(Boolean).join(' ');
+  };
+  const detail = w => {
+    if (isStrength(w)) {
+      return `<div class="sim-body">${w.strength.setResults.map((r, i) => `<div>${i + 1}세트 · ${loadText(r.load)} × ${numStr(r.reps)}</div>`).join('')}</div>`;
+    }
+    const st = workoutStats(w, body(w.date));
+    const bs = w.repeat && w.blocks.length > 1 ? [w.blocks[0]] : w.blocks;
+    return `<div class="sim-body">
+      ${w.title ? `<div class="muted">${esc(w.title)}</div>` : ''}
+      ${bs.map(b => b.items.map(it => `<div>${itemText(it, b)}</div>`).join('')).join('<hr>')}
+      <div class="sim-res"><b>${esc(w.blocks.map(resultText).join(' · '))}</b><span class="muted">${[w.rpe ? `RPE ${w.rpe}` : '', st.powerW != null ? `${Math.round(st.powerW)} W` : ''].filter(Boolean).join(' · ')}</span></div>
+      ${w.notes ? `<div class="muted pre">${esc(w.notes)}</div>` : ''}
+      ${link ? `<a class="g-link" href="#/w/${w.id}">기록 열기 ›</a>` : ''}
+    </div>`;
+  };
+  return `
+    <div class="g-title"><span>같은 동작이 나온 기록</span><span class="muted small">비교용 · 최근 ${list.length}개</span></div>
+    <div class="cells">${list.map(({ w, shared }) => {
+      const ss = isStrength(w) ? strengthSummary(w) : null;
+      const res = isStrength(w) ? (ss ? loadText(ss.top) : '-') : scoreOf(w).text;
+      return `
+        <details class="cell sim" data-id="${esc(w.id)}">
+          <summary>
+            <span class="cell-main">
+              <span class="cell-label">${dateLabel(w.date)} ${badge(w.level)}${isStrength(w) ? '<span class="chip-kind">Strength</span>' : ''}</span>
+              <span class="cell-sub">${esc(shared.slice(0, 4).map(k => useText(w, k)).filter(Boolean).join(' · '))}${shared.length > 4 ? ` 외 ${shared.length - 4}` : ''}</span>
+            </span>
+            <span class="cell-value strong">${esc(res)}</span>
+          </summary>
+          ${detail(w)}
+        </details>`;
+    }).join('')}</div>`;
 }
 
 // 같은 벤치마크의 기록 비교 (PR, 직전 대비)
